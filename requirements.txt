@@ -1,0 +1,8 @@
+apache-airflow-providers-apache-spark==5.0.0
+beautifulsoup4==4.13.3
+minio==7.2.15
+pandas==2.2.3
+pyarrow==19.0.1
+PyMySQL==1.1.1
+requests==2.32.3
+SQLAlchemy==1.4.54

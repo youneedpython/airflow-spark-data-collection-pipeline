@@ -1,0 +1,267 @@
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: docker/airflow/Dockerfile
+  environment: &airflow-environment
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: >-
+      postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+    AIRFLOW__WEBSERVER__SECRET_KEY: local-education-secret-key
+    PYTHONPATH: /opt/project/src
+    PROJECT_DIR: /opt/project
+    DATA_DIR: /opt/project/data
+    START_PAGE: ${START_PAGE:-1}
+    END_PAGE: ${END_PAGE:-3}
+    MYSQL_HOST: mysql
+    MYSQL_PORT: 3306
+    MYSQL_DATABASE: ${MYSQL_DATABASE:-booksdb}
+    MYSQL_USER: ${MYSQL_USER:-books}
+    MYSQL_PASSWORD: ${MYSQL_PASSWORD:-books}
+    MINIO_ENDPOINT: minio:9000
+    MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+    MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    MINIO_BUCKET: ${MINIO_BUCKET:-data-lake}
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - ./spark:/opt/project/spark:ro
+    - ./src:/opt/project/src:ro
+    - ./tests:/opt/project/tests:ro
+    - ./data:/opt/project/data
+    - ./pyproject.toml:/opt/project/pyproject.toml:ro
+  depends_on:
+    airflow-postgres:
+      condition: service_healthy
+    mysql:
+      condition: service_healthy
+  networks:
+    - pipeline-network
+
+x-spark-common: &spark-common
+  build:
+    context: .
+    dockerfile: Dockerfile.spark
+  image: airflow-spark-pipeline-spark:3.5.3
+  user: "50000:0"
+  environment: &spark-environment
+    HOME: /home/spark
+    USER: spark
+    LOGNAME: spark
+    SPARK_USER: spark
+    HADOOP_USER_NAME: spark
+    SPARK_NO_DAEMONIZE: "true"
+  volumes:
+    - ./spark:/opt/project/spark:ro
+    - ./data:/opt/project/data
+  networks:
+    - pipeline-network
+
+services:
+  airflow-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - pipeline-network
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-booksdb}
+      MYSQL_USER: ${MYSQL_USER:-books}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-books}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mysqladmin ping
+          -h localhost
+          -uroot
+          -p$${MYSQL_ROOT_PASSWORD}
+          --silent
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks:
+      - pipeline-network
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command:
+      - server
+      - /data
+      - --console-address
+      - ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    restart: unless-stopped
+    networks:
+      - pipeline-network
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        until mc alias set \
+          local \
+          http://minio:9000 \
+          "$${MINIO_ROOT_USER}" \
+          "$${MINIO_ROOT_PASSWORD}"
+        do
+          echo "MinIO 시작 대기 중..."
+          sleep 2
+        done
+
+        mc mb --ignore-existing "local/$${MINIO_BUCKET}"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-data-lake}
+    networks:
+      - pipeline-network
+
+  spark-master:
+    <<: *spark-common
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.master.Master
+      - --host
+      - spark-master
+      - --port
+      - "7077"
+      - --webui-port
+      - "8080"
+    environment:
+      <<: *spark-environment
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: "7077"
+      SPARK_MASTER_WEBUI_PORT: "8080"
+    ports:
+      - "8081:8080"
+      - "7077:7077"
+    restart: unless-stopped
+
+  spark-worker:
+    <<: *spark-common
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - spark://spark-master:7077
+      - --cores
+      - "2"
+      - --memory
+      - 2g
+      - --work-dir
+      - /tmp/spark-work
+      - --webui-port
+      - "8081"
+    environment:
+      <<: *spark-environment
+      SPARK_WORKER_CORES: "2"
+      SPARK_WORKER_MEMORY: 2g
+      SPARK_WORKER_WEBUI_PORT: "8081"
+      SPARK_LOCAL_DIRS: /tmp/spark-work
+    ports:
+      - "8082:8081"
+    depends_on:
+      spark-master:
+        condition: service_started
+    restart: unless-stopped
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -p \
+          /opt/project/data/raw/html \
+          /opt/project/data/interim \
+          /opt/project/data/silver \
+          /opt/project/data/gold
+
+        airflow db migrate
+
+        airflow users create \
+          --username "$${AIRFLOW_ADMIN_USER}" \
+          --password "$${AIRFLOW_ADMIN_PASSWORD}" \
+          --firstname Airflow \
+          --lastname Admin \
+          --role Admin \
+          --email admin@example.com || true
+
+        airflow connections add spark_default \
+          --conn-type spark \
+          --conn-host spark-master \
+          --conn-port 7077 || true
+    environment:
+      <<: *airflow-environment
+      AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:-airflow}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-airflow}
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    hostname: airflow-scheduler
+    ports:
+      - "4040:4040"
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      spark-master:
+        condition: service_started
+      spark-worker:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  airflow-postgres-data:
+  mysql-data:
+  minio-data:
+
+networks:
+  pipeline-network:
+    driver: bridge

@@ -1,0 +1,38 @@
+FROM apache/spark:3.5.3
+
+USER root
+
+# Airflow와 Spark가 동일한 호스트 폴더를 사용할 수 있도록
+# Spark 사용자의 UID/GID를 Airflow 사용자와 동일하게 설정합니다.
+#
+# Airflow 기본 사용자:
+#   UID = 50000
+#   GID = 0
+RUN usermod \
+        --uid 50000 \
+        --gid 0 \
+        --home /home/spark \
+        spark \
+    && mkdir -p \
+        /home/spark \
+        /tmp/spark-work \
+        /opt/project/data \
+    && chown -R 50000:0 \
+        /home/spark \
+        /tmp/spark-work \
+        /opt/spark \
+        /opt/project/data \
+    && chmod -R g+rwX \
+        /home/spark \
+        /tmp/spark-work \
+        /opt/spark \
+        /opt/project/data
+
+ENV HOME=/home/spark
+ENV USER=spark
+ENV LOGNAME=spark
+ENV SPARK_USER=spark
+
+WORKDIR /opt/spark/work-dir
+
+USER 50000:0
