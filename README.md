@@ -1,8 +1,36 @@
+<div align="center">
+
+# Airflow–Spark Data Collection Pipeline
+
+### Airflow로 웹 크롤링을 오케스트레이션하고 Spark로 데이터를 처리하는 데이터 파이프라인
+
+<br>
+
+<img src="https://img.shields.io/badge/Apache%20Airflow-017CEE?style=for-the-badge&logo=apacheairflow&logoColor=white" alt="Apache Airflow">
+<img src="https://img.shields.io/badge/Apache%20Spark-E25A1C?style=for-the-badge&logo=apachespark&logoColor=white" alt="Apache Spark">
+<img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
+<img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
+
+<br>
+
+<img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL">
+<img src="https://img.shields.io/badge/MySQL-4479A1?style=for-the-badge&logo=mysql&logoColor=white" alt="MySQL">
+<img src="https://img.shields.io/badge/MinIO-C72E49?style=for-the-badge&logo=minio&logoColor=white" alt="MinIO">
+<img src="https://img.shields.io/badge/Apache%20Parquet-50ABF1?style=for-the-badge&logo=apacheparquet&logoColor=white" alt="Apache Parquet">
+
+<br><br>
+
 # Airflow–Spark Data Collection Pipeline
 
 > Airflow로 정적 웹 크롤링을 오케스트레이션하고 Spark로 데이터를 정제·집계한 뒤 MySQL과 MinIO에 저장하는 Docker 기반 엔드투엔드 데이터 파이프라인
 
 이 프로젝트는 [Books to Scrape](https://books.toscrape.com/)의 도서 데이터를 배치 단위로 수집합니다. Apache Airflow가 전체 실행 순서와 상태를 관리하고, Apache Spark Standalone Cluster가 전처리와 통계 집계를 수행합니다. 처리 결과는 Raw–Interim–Silver–Gold 계층으로 관리하며, 정제된 상세 데이터는 MySQL에 Upsert하고 계층별 파일은 MinIO Object Storage에 동기화합니다.
+
+</div>
+
+<br>
+
+---
 
 ## 핵심 학습 목표
 
